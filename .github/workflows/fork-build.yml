@@ -1,0 +1,116 @@
+name: Fork Build
+
+# fork 专用：GitHub 不给 fork 跑上游的 workflow，这里自己起一份，
+# 只做 windows 编译出安装包，不做 lint（不重排我们改的格式）。
+# 这个文件只活在 ci-build 分支上，提 PR 时不带过去。
+
+on:
+  push:
+    branches:
+      - 'ci-build'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    env:
+      boost_version: 1.84.0
+      BOOST_ROOT: ${{ github.workspace }}\deps\boost_1_84_0
+      SDKVER: 10.0.19041.0
+    steps:
+      - name: Checkout last commit
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Fetch all tags
+        run: git fetch --tags
+
+      - name: Configure build environment
+        shell: bash
+        run: |
+          cp env.vs2022.bat env.bat
+          echo git_ref_name="$(git describe --always)" >> $GITHUB_ENV
+
+      - name: Cache Boost
+        id: cache-boost
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.BOOST_ROOT }}
+          key: ${{ runner.os }}-boost-${{ env.boost_version }}
+
+      - name: Install Boost
+        if: steps.cache-boost.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          ./install_boost.bat
+          ./build.bat boost arm64
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          sdk: ${{ env.SDKVER }}
+
+      - name: cache bundled winsparkle
+        id: cache-winsparkle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}\winsparkle\x64\Release\WinSparkle.dll
+            ${{ github.workspace }}\winsparkle\x64\Release\WinSparkle.lib
+            ${{ github.workspace }}\winsparkle\Release\WinSparkle.dll
+            ${{ github.workspace }}\winsparkle\Release\WinSparkle.lib
+          key: ${{ runner.os }}-winsparkle-v0.9.2-bundled
+          restore-keys: |
+            winsparkle-v0.9.2-bundled
+
+      - name: Build bundled winsparkle
+        if: steps.cache-winsparkle.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path winsparkle) { Remove-Item -Recurse -Force winsparkle }
+          git clone https://github.com/vslavik/winsparkle.git -b v0.9.2 --depth 1
+          cd winsparkle
+          git submodule update --init --recursive
+          copy ..\bundled_winsparkle.patch .
+          git apply bundled_winsparkle.patch
+          nuget restore
+          msbuild -m -t:Build -p:Configuration=Release -p:Platform=x64 WinSparkle.sln
+          msbuild -m -t:Build -p:Configuration=Release -p:Platform=Win32 WinSparkle.sln
+
+      - name: Install WinSparkle files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          copy .\winsparkle\x64\Release\WinSparkle.dll .\output\
+          copy .\winsparkle\x64\Release\WinSparkle.lib .\lib64\
+          copy .\winsparkle\Release\WinSparkle.dll .\output\Win32\
+          copy .\winsparkle\Release\WinSparkle.lib .\lib\
+
+      - name: Get Rime files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          .\get-rime.ps1 -use dev
+
+      - name: Build data
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          .\build.bat data
+
+      - name: Build Weasel
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          .\build.bat arm64 installer
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: weasel-installer
+          if-no-files-found: error
+          path: |
+            .\output\archives\weasel*.exe
