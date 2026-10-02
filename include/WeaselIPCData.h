@@ -221,8 +221,14 @@ struct UIStyle {
   // 候选窗背景图
   std::wstring background_image;
   // 底图填充模式：0=stretch(默认，等同旧行为) 1=tile 2=center 3=fit
+  // 4=contain（只按窗高等比缩放，整宽可见，窗宽变化时不重算比例）
   // 只在 background_image 非空时起作用
   int background_fill_mode;
+  // 底图对齐锚点：0=left 1=center(默认) 2=right
+  // 对 center 与 contain 生效；tile/stretch/fit 用不到
+  int background_anchor;
+  // 毛玻璃底：默认 false。false 时逐像素等于旧行为，不碰 DWM
+  bool background_blur;
   int font_point;
   int label_font_point;
   int comment_font_point;
@@ -303,6 +309,8 @@ struct UIStyle {
         comment_font_face(),
         background_image(),
         background_fill_mode(0),
+        background_anchor(1),
+        background_blur(false),
         font_point(0),
         label_font_point(0),
         comment_font_point(0),
@@ -380,6 +388,8 @@ struct UIStyle {
         comment_font_face != st.comment_font_face ||
         background_image != st.background_image ||
         background_fill_mode != st.background_fill_mode ||
+        background_anchor != st.background_anchor ||
+        background_blur != st.background_blur ||
         hover_type != st.hover_type || font_point != st.font_point ||
         label_font_point != st.label_font_point ||
         comment_font_point != st.comment_font_point ||
@@ -442,6 +452,8 @@ void serialize(Archive& ar, weasel::UIStyle& s, const unsigned int version) {
   ar & s.comment_font_face;
   ar & s.background_image;
   ar & s.background_fill_mode;
+  ar & s.background_anchor;
+  ar & s.background_blur;
   ar & s.hover_type;
   ar & s.font_point;
   ar & s.label_font_point;

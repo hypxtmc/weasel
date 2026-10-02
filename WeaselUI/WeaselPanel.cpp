@@ -618,6 +618,13 @@ void WeaselPanel::_HighlightText(CDCHandle& dc,
     Gdiplus::SolidBrush back_brush(back_color);
     g_back.FillPath(&back_brush, hiliteBackPath);
   }
+  // 毛玻璃底（默认关）：与要不要铺图无关，在整窗背景这一步请求一次。
+  // 每次重绘都重设一次：候选窗逐字变宽，不按新矩形重设会在旧边界留下硬边。
+  // 请求失败（取不到导出/系统不支持）就什么也不做，底色照旧。
+  if (type == BackType::BACKGROUND && NOT_FULLSCREENLAYOUT(m_style) &&
+      m_style.background_blur) {
+    _ApplyBlurBehind(true);
+  }
   // 候选窗背景图：填色之后按同一圆角路径裁进来画一层，压在候选文字之下
   // 只在整窗背景这一步绘制，候选词高亮不贴图；全屏布局跳过
   if (type == BackType::BACKGROUND && !m_style.background_image.empty() &&
@@ -682,6 +689,51 @@ void WeaselPanel::_HighlightText(CDCHandle& dc,
   hiliteBackPath = NULL;
 }
 
+// —— 毛玻璃底 ——
+// 这些声明 Win10 SDK 里没有，自己补；SetWindowCompositionAttribute 是 user32
+// 的导出，动态取，不新增链接库（走 DwmEnableBlurBehindWindow 才需要 dwmapi.lib）
+enum ACCENT_STATE_WS { ACCENT_DISABLED_WS = 0, ACCENT_ENABLE_BLURBEHIND_WS = 3 };
+struct ACCENT_POLICY_WS {
+  DWORD AccentState, AccentFlags, GradientColor, AnimationId;
+};
+enum WINDOWCOMPOSITIONATTRIB_WS { WCA_ACCENT_POLICY_WS = 19 };
+struct WINDOWCOMPOSITIONATTRIBDATA_WS {
+  WINDOWCOMPOSITIONATTRIB_WS Attrib;
+  PVOID pvData;
+  SIZE_T cbData;
+};
+
+bool WeaselPanel::_ApplyBlurBehind(bool enable) {
+  typedef BOOL(WINAPI * PFN)(HWND, WINDOWCOMPOSITIONATTRIBDATA_WS*);
+  static PFN pfn = nullptr;
+  static bool resolved = false;
+  if (!resolved) {
+    resolved = true;
+    if (HMODULE u = ::GetModuleHandleW(L"user32.dll"))
+      pfn = (PFN)::GetProcAddress(u, "SetWindowCompositionAttribute");
+  }
+  if (!pfn || !m_hWnd)
+    return false;  // 取不到 → 调用方落实色兜底
+  ACCENT_POLICY_WS policy = {};
+  policy.AccentState =
+      enable ? ACCENT_ENABLE_BLURBEHIND_WS : ACCENT_DISABLED_WS;
+  policy.AccentFlags = 2;
+  WINDOWCOMPOSITIONATTRIBDATA_WS data = {WCA_ACCENT_POLICY_WS, &policy,
+                                          sizeof(policy)};
+  return pfn(m_hWnd, &data) != FALSE;
+}
+
+// 按 m_style.background_anchor 算横向起点：0=left 1=center(默认) 2=right
+// center 与 contain 用它；tile/stretch/fit 与锚点无关
+Gdiplus::REAL WeaselPanel::_AnchorX(Gdiplus::REAL x, Gdiplus::REAL box_w,
+                                    Gdiplus::REAL img_w) const {
+  if (m_style.background_anchor == 0)
+    return x;
+  if (m_style.background_anchor == 2)
+    return x + box_w - img_w;
+  return x + (box_w - img_w) / 2;
+}
+
 // 按 style/background_fill_mode 铺底图
 void WeaselPanel::_DrawBackgroundImage(Gdiplus::Graphics& g,
                                        const CRect& rc,
@@ -700,13 +752,21 @@ void WeaselPanel::_DrawBackgroundImage(Gdiplus::Graphics& g,
   switch (m_style.background_fill_mode) {
     case 1: {  // tile：原尺寸平铺，不缩放
       Gdiplus::TextureBrush brush(m_bg_image, Gdiplus::WrapModeTile);
+      // TextureBrush 会按图片自带的 DPI 元数据缩放每一个平铺块：
+      // 图里写的不是 96dpi 时，平铺块会比原图偏大或偏小。归一到 96。
+      const Gdiplus::REAL dpi_x =
+          (Gdiplus::REAL)m_bg_image->GetHorizontalResolution();
+      const Gdiplus::REAL dpi_y =
+          (Gdiplus::REAL)m_bg_image->GetVerticalResolution();
+      if (dpi_x > 0 && dpi_y > 0 && (dpi_x != 96.0f || dpi_y != 96.0f))
+        brush.ScaleTransform(96.0f / dpi_x, 96.0f / dpi_y);
       brush.TranslateTransform(dst.X, dst.Y);
       g.FillRectangle(&brush, dst);
       break;
     }
-    case 2: {  // center：原尺寸居中，图大就自然被裁掉四边
-      const Gdiplus::RectF box(dst.X + (dst.Width - w) / 2,
-                               dst.Y + (dst.Height - h) / 2, w, h);
+    case 2: {  // center：原尺寸，按 anchor 贴左/居中/贴右，图大就自然被裁
+      const Gdiplus::REAL x = _AnchorX(dst.X, dst.Width, w);
+      const Gdiplus::RectF box(x, dst.Y + (dst.Height - h) / 2, w, h);
       g.DrawImage(m_bg_image, box);
       break;
     }
@@ -717,6 +777,14 @@ void WeaselPanel::_DrawBackgroundImage(Gdiplus::Graphics& g,
       g.DrawImage(m_bg_image,
                   Gdiplus::RectF(dst.X + (dst.Width - dw) / 2,
                                  dst.Y + (dst.Height - dh) / 2, dw, dh));
+      break;
+    }
+    case 4: {  // contain：只按窗高缩放，整宽可见；窗宽怎么变都不重算比例
+      const Gdiplus::REAL k = dst.Height / h;
+      const Gdiplus::REAL dw = w * k;
+      g.DrawImage(m_bg_image,
+                  Gdiplus::RectF(_AnchorX(dst.X, dst.Width, dw), dst.Y, dw,
+                                 dst.Height));
       break;
     }
     default:  // 0 = stretch：与旧行为逐像素一致

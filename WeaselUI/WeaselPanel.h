@@ -109,7 +109,13 @@ class WeaselPanel
   // 因此只能做成成员，不能写成函数内 static
   Gdiplus::Bitmap* m_bg_image;
   std::wstring m_bg_image_path;
-  // 按 background_fill_mode 把底图画进 rc（内部处理 stretch/tile/center/fit）
+  // 按 background_fill_mode 把底图画进 rc
+  // （内部处理 stretch/tile/center/fit/contain）
+  Gdiplus::REAL _AnchorX(Gdiplus::REAL x, Gdiplus::REAL box_w,
+                         Gdiplus::REAL img_w) const;
+  // 以上四个模式中 center 与 contain 会用到 background_anchor
+  // 毛玻璃底：请求成功返回 true；取不到导出/系统不支持 → false，落回实色
+  bool _ApplyBlurBehind(bool enable);
   void _DrawBackgroundImage(Gdiplus::Graphics& g,
                             const CRect& rc,
                             Gdiplus::GraphicsPath* clip_path);

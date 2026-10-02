@@ -1196,11 +1196,21 @@ static void _UpdateUIStyle(RimeConfig* config, UI* ui, bool initialize) {
     style.background_image = base + style.background_image;
   }
   // 底图填充模式：不写这一项 = stretch = 与旧行为逐像素一致
-  static constexpr Array<int, 4> _bgFillArr = {
-      {{"stretch", 0}, {"tile", 1}, {"center", 2}, {"fit", 3}}};
+  // contain = 只按窗高等比缩放、整宽可见，窗宽变化时不重算比例
+  static constexpr Array<int, 5> _bgFillArr = {
+      {{"stretch", 0}, {"tile", 1}, {"center", 2}, {"fit", 3}, {"contain", 4}}};
   _RimeParseStringOptWithFallback(config, "style/background_fill_mode",
-                                  style.background_fill_mode, _bgFillArr,
-                                  style.background_fill_mode);
+                                   style.background_fill_mode, _bgFillArr,
+                                   style.background_fill_mode);
+  // 底图锚点：不写这一项 = center = 与旧行为一致，只影响 center 与 contain
+  static constexpr Array<int, 3> _bgAnchorArr = {
+      {{"left", 0}, {"center", 1}, {"right", 2}}};
+  _RimeParseStringOptWithFallback(config, "style/background_anchor",
+                                   style.background_anchor, _bgAnchorArr,
+                                   style.background_anchor);
+  // 毛玻璃底：不写 = false。Win10 上默认不依赖 DWM，逐像素保留旧外观
+  _RimeGetBool(config, "style/background_blur", initialize,
+               style.background_blur, true, false);
   // able to set label font/comment font empty, force fallback to font face.
   if (style.label_font_face.empty())
     style.label_font_face = style.font_face;
