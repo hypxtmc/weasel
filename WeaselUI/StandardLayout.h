@@ -8,7 +8,13 @@
 
 namespace weasel {
 const int MAX_CANDIDATES_COUNT = 100;
-const int STATUS_ICON_SIZE = GetSystemMetrics(SM_CXICON);
+// 候选窗里那个「中」/「A」状态图标的边长。
+// 原来取 SM_CXICON（系统"大图标"）：它跟着显示缩放走，300% 缩放上是 96px，
+// 比 14pt 的候选字大两倍多，一按 Shift 切中英，候选窗就被撑成一块大牌子。
+// 那只是个状态符号，不是桌面图标，改用小图标那一档，随 DPI 自然缩放。
+const int STATUS_ICON_SIZE = GetSystemMetrics(SM_CXSMICON) > 0
+                                 ? GetSystemMetrics(SM_CXSMICON)
+                                 : 16;
 
 class StandardLayout : public Layout {
  public:
