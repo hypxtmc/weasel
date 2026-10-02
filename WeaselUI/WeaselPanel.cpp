@@ -53,6 +53,7 @@ static inline void ReconfigRoundInfo(IsToRoundStruct& rd,
 WeaselPanel::WeaselPanel(weasel::UI& ui)
     : m_layout(NULL),
       m_bg_image(NULL),
+      m_blur_applied(0),
       m_ctx(ui.ctx()),
       m_octx(ui.octx()),
       m_status(ui.status()),
@@ -612,18 +613,24 @@ void WeaselPanel::_HighlightText(CDCHandle& dc,
     pBitmapDropShadow = NULL;
   }
 
+  // 毛玻璃底（默认关）：与要不要铺图无关，在整窗背景这一步请求一次。
+  // mode 0=关 1=blur 2=acrylic。0 时也要下发一次 DISABLED，否则把配置
+  // 改回关之后模糊会一直留在窗口上，直到 WeaselServer 重启才掉。
+  // 每次重绘都重设一次：候选窗逐字变宽，不按新矩形重设会在旧边界留下硬边。
+  COLORREF back_fill = color;
+  if (type == BackType::BACKGROUND && NOT_FULLSCREENLAYOUT(m_style)) {
+    const bool blur_on = _ApplyBlurBehind(m_style.background_blur);
+    if (m_style.background_blur) {
+      // 半透明底压在模糊上：0xDC≈86%，再低字的边会发毛；
+      // 拿不到模糊就落实色兜底，绝不让半透明压在没模糊的底上
+      back_fill = blur_on ? 0xDCF3F3F3 : 0xF2F5F5F5;
+    }
+  }
   // 必须back_color非完全透明才绘制
-  if (COLORNOTTRANSPARENT(color)) {
-    Gdiplus::Color back_color = GDPCOLOR_FROM_COLORREF(color);
+  if (COLORNOTTRANSPARENT(back_fill)) {
+    Gdiplus::Color back_color = GDPCOLOR_FROM_COLORREF(back_fill);
     Gdiplus::SolidBrush back_brush(back_color);
     g_back.FillPath(&back_brush, hiliteBackPath);
-  }
-  // 毛玻璃底（默认关）：与要不要铺图无关，在整窗背景这一步请求一次。
-  // 每次重绘都重设一次：候选窗逐字变宽，不按新矩形重设会在旧边界留下硬边。
-  // 请求失败（取不到导出/系统不支持）就什么也不做，底色照旧。
-  if (type == BackType::BACKGROUND && NOT_FULLSCREENLAYOUT(m_style) &&
-      m_style.background_blur) {
-    _ApplyBlurBehind(true);
   }
   // 候选窗背景图：填色之后按同一圆角路径裁进来画一层，压在候选文字之下
   // 只在整窗背景这一步绘制，候选词高亮不贴图；全屏布局跳过
@@ -692,7 +699,12 @@ void WeaselPanel::_HighlightText(CDCHandle& dc,
 // —— 毛玻璃底 ——
 // 这些声明 Win10 SDK 里没有，自己补；SetWindowCompositionAttribute 是 user32
 // 的导出，动态取，不新增链接库（走 DwmEnableBlurBehindWindow 才需要 dwmapi.lib）
-enum ACCENT_STATE_WS { ACCENT_DISABLED_WS = 0, ACCENT_ENABLE_BLURBEHIND_WS = 3 };
+// 3 = BLURBEHIND（Win10 上的正路）；4 = ACRYLICBLURBEHIND（1903+ 有已知拖动掉帧）
+enum ACCENT_STATE_WS {
+  ACCENT_DISABLED_WS = 0,
+  ACCENT_ENABLE_BLURBEHIND_WS = 3,
+  ACCENT_ENABLE_ACRYLICBLURBEHIND_WS = 4
+};
 struct ACCENT_POLICY_WS {
   DWORD AccentState, AccentFlags, GradientColor, AnimationId;
 };
@@ -703,7 +715,7 @@ struct WINDOWCOMPOSITIONATTRIBDATA_WS {
   SIZE_T cbData;
 };
 
-bool WeaselPanel::_ApplyBlurBehind(bool enable) {
+bool WeaselPanel::_ApplyBlurBehind(int mode) {
   typedef BOOL(WINAPI * PFN)(HWND, WINDOWCOMPOSITIONATTRIBDATA_WS*);
   static PFN pfn = nullptr;
   static bool resolved = false;
@@ -712,15 +724,34 @@ bool WeaselPanel::_ApplyBlurBehind(bool enable) {
     if (HMODULE u = ::GetModuleHandleW(L"user32.dll"))
       pfn = (PFN)::GetProcAddress(u, "SetWindowCompositionAttribute");
   }
-  if (!pfn || !m_hWnd)
+  if (!pfn || !m_hWnd) {
+    m_blur_applied = 0;
     return false;  // 取不到 → 调用方落实色兜底
+  }
+  // 默认路径（没开过、这次也没要求开）什么都不做，逐像素等于旧行为
+  if (mode == 0 && m_blur_applied == 0)
+    return false;
   ACCENT_POLICY_WS policy = {};
-  policy.AccentState =
-      enable ? ACCENT_ENABLE_BLURBEHIND_WS : ACCENT_DISABLED_WS;
+  switch (mode) {
+    case 1:
+      policy.AccentState = ACCENT_ENABLE_BLURBEHIND_WS;
+      break;
+    case 2:
+      // 亚克力：不透明度语义由 GradientColor 带（ABGR，最高字节是 alpha）。
+      // 取 R/B 对称的灰，字节序写反也不影响观感
+      policy.AccentState = ACCENT_ENABLE_ACRYLICBLURBEHIND_WS;
+      policy.GradientColor = 0xDCF3F3F3;
+      break;
+    default:
+      policy.AccentState = ACCENT_DISABLED_WS;
+      break;
+  }
   policy.AccentFlags = 2;
   WINDOWCOMPOSITIONATTRIBDATA_WS data = {WCA_ACCENT_POLICY_WS, &policy,
                                           sizeof(policy)};
-  return pfn(m_hWnd, &data) != FALSE;
+  const BOOL ok = pfn(m_hWnd, &data);
+  m_blur_applied = (ok && mode != 0) ? mode : 0;
+  return ok && mode != 0;
 }
 
 // 按 m_style.background_anchor 算横向起点：0=left 1=center(默认) 2=right

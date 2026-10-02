@@ -227,8 +227,8 @@ struct UIStyle {
   // 底图对齐锚点：0=left 1=center(默认) 2=right
   // 对 center 与 contain 生效；tile/stretch/fit 用不到
   int background_anchor;
-  // 毛玻璃底：默认 false。false 时逐像素等于旧行为，不碰 DWM
-  bool background_blur;
+  // 毛玻璃底：0=off(默认，逐像素等于旧行为，不碰 DWM) 1=blur 2=acrylic
+  int background_blur;
   int font_point;
   int label_font_point;
   int comment_font_point;
@@ -310,7 +310,7 @@ struct UIStyle {
         background_image(),
         background_fill_mode(0),
         background_anchor(1),
-        background_blur(false),
+        background_blur(0),
         font_point(0),
         label_font_point(0),
         comment_font_point(0),

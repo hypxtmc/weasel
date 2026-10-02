@@ -114,8 +114,12 @@ class WeaselPanel
   Gdiplus::REAL _AnchorX(Gdiplus::REAL x, Gdiplus::REAL box_w,
                          Gdiplus::REAL img_w) const;
   // 以上四个模式中 center 与 contain 会用到 background_anchor
-  // 毛玻璃底：请求成功返回 true；取不到导出/系统不支持 → false，落回实色
-  bool _ApplyBlurBehind(bool enable);
+  // 毛玻璃底：mode 0=关 1=blur 2=acrylic；返回窗口当前是否真的带着模糊
+  //（取不到导出 / 调用失败 → false，调用方落实色兜底）
+  bool _ApplyBlurBehind(int mode);
+  // 上一次真正下发给窗口的 mode，0 = 没开过。
+  // 一是不必每帧重复下发，二是配置改回关时要能主动撤销
+  int m_blur_applied;
   void _DrawBackgroundImage(Gdiplus::Graphics& g,
                             const CRect& rc,
                             Gdiplus::GraphicsPath* clip_path);

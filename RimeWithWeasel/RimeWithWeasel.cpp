@@ -1208,9 +1208,14 @@ static void _UpdateUIStyle(RimeConfig* config, UI* ui, bool initialize) {
   _RimeParseStringOptWithFallback(config, "style/background_anchor",
                                    style.background_anchor, _bgAnchorArr,
                                    style.background_anchor);
-  // 毛玻璃底：不写 = false。Win10 上默认不依赖 DWM，逐像素保留旧外观
-  _RimeGetBool(config, "style/background_blur", initialize,
-               style.background_blur, true, false);
+  // 毛玻璃底：不写 = off。off 时逐像素保留旧外观，不依赖 DWM
+  // blur = ACCENT_ENABLE_BLURBEHIND（Win10 正路）
+  // acrylic = ACCENT_ENABLE_ACRYLICBLURBEHIND（1903+ 有已知拖动掉帧）
+  static constexpr Array<int, 3> _bgBlurArr = {
+      {{"off", 0}, {"blur", 1}, {"acrylic", 2}}};
+  _RimeParseStringOptWithFallback(config, "style/background_blur",
+                                  style.background_blur, _bgBlurArr,
+                                  style.background_blur);
   // able to set label font/comment font empty, force fallback to font face.
   if (style.label_font_face.empty())
     style.label_font_face = style.font_face;
